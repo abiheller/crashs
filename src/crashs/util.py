@@ -393,12 +393,24 @@ def ashs_posteriors_to_tissue_probabilities(
                 p_max = np.maximum(p_max, np.max(img_arr))
                 p_cat[cat] = img_arr if p_cat[cat] is None else p_cat[cat] + img_arr
 
-    # Normalize the posteriors so that the max total probability is one. Notably the posteriors
-    # output by JLF can be negative and here we clip them to the zero/one range. Finally, we
-    # optionally apply softmax
-    x = np.concatenate([p_cat[cat][:, :, :, np.newaxis] for cat in category_order], axis=3)
-    # p_max = np.max(np.sum(x, 3))
-    x = np.clip(x, 0, p_max) / p_max;
+    # Print the contents of p_cat and category_order to debug
+    print("p_cat:", p_cat)
+    print("category_order:", category_order)
+    
+    # Check for missing or None categories in p_cat
+    for cat in category_order:
+        print(f"p_cat[{cat}] = {p_cat.get(cat, None)}")
+
+    # Now try to concatenate the arrays
+    try:
+        x = np.concatenate([p_cat[cat][:, :, :, np.newaxis] for cat in category_order], axis=3)
+    except Exception as e:
+        print(f"Error encountered during concatenation: {e}")
+        raise
+
+    # Normalize the posteriors so that the max total probability is one.
+    x = np.clip(x, 0, p_max) / p_max
+
 
     # Allocate the missing probability to the background 
     bix = category_order.index(background_category)
