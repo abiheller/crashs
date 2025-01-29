@@ -89,84 +89,99 @@ class TemplateBuildWorkspace:
 
 # Run the groupwise affine step and find the mesh to use as the template source
 def groupwise_similarity_registration_keops(tbs: TemplateBuildWorkspace, template: Template, device):
+    try:
+        # From the template directory, load the left/right flip file.
+        flip_lr = np.loadtxt(os.path.join(template.root, 'ashs_template_flip.mat'))
+        print(f"flip_lr: {flip_lr.shape}")  # Check the shape of the flip matrix
 
-    # From the template directory, load the left/right flip file. 
-    flip_lr = np.loadtxt(os.path.join(template.root, 'ashs_template_flip.mat'))
-    print(f"flip_lr: {flip_lr.shape}")  # Check the shape of the flip matrix
+        # Set the sigma tensors
+        sigma_varifold = torch.tensor([template.get_varifold_sigma()], dtype=torch.float32, device=device)
+        print(f"sigma_varifold: {sigma_varifold}")
 
-    # Set the sigma tensors
-    sigma_varifold = torch.tensor([template.get_varifold_sigma()], dtype=torch.float32, device=device)
-    print(f"sigma_varifold: {sigma_varifold}")
+        # Load each of the meshes that will be used to build the template
+        md_full, md_ds = {}, {}
+        for id, sd in tbs.get_subjects():
+            # Depending on the side, apply flip_lr as the transform
+            transform = flip_lr if sd['side'] == 'right' else None
 
-    # Load each of the meshes that will be used to build the template
-    md_full, md_ds = {}, {}
-    for id, sd in tbs.get_subjects():
-        
-        # Depending on the side, apply flip_lr as the transform
-        transform = flip_lr if sd['side'] == 'right' else None
+            # Load the mesh data
+            pd = load_vtk(sd['workspace'].affine_moving)
+            md_full[id] = MeshData(load_vtk(sd['workspace'].affine_moving), device, transform=transform)
+            md_ds[id] = MeshData(load_vtk(sd['workspace'].affine_moving_reduced), device, transform=transform)
 
-        # Load the mesh data
-        pd = load_vtk(sd['workspace'].affine_moving)
-        md_full[id] = MeshData(load_vtk(sd['workspace'].affine_moving), device, transform=transform)
-        md_ds[id] = MeshData(load_vtk(sd['workspace'].affine_moving_reduced), device, transform=transform)
+            # Save the input to the groupwise affine
+            pd_flipped = vtk_make_pd(md_ds[id].v, md_ds[id].f)
+            vtk_set_cell_array(pd_flipped, 'plab', md_ds[id].lp)
+            save_vtk(pd_flipped, tbs.fn_affine_input(id))
 
-        # Save the input to the groupwise affine
-        pd_flipped = vtk_make_pd(md_ds[id].v, md_ds[id].f)
-        vtk_set_cell_array(pd_flipped, 'plab', md_ds[id].lp)
-        save_vtk(pd_flipped, tbs.fn_affine_input(id))
-       # Print the populated md_ds to ensure it's not empty
-    print(f"Loaded {len(md_ds)} subjects in md_ds.")
-    if not md_ds:
-    	print("Error: No mesh data loaded!")
-    	return
+        # Print the populated md_ds to ensure it's not empty
+        print(f"Loaded {len(md_ds)} subjects in md_ds.")
+        if not md_ds:
+            print("Error: No mesh data loaded!")
+            return
 
-    # Compute the varifold loss between all pairs of atlases with similarity transform,
-    # running a quick registration between all pairs. This might get too much for large
-    # training sets though
-    ids = list(md_ds.keys())
-    dsq_sub = np.zeros((len(md_ds), len(md_ds)))
+        # Compute the varifold loss between all pairs of atlases with similarity transform,
+        # running a quick registration between all pairs.
+        ids = list(md_ds.keys())
+        dsq_sub = np.zeros((len(md_ds), len(md_ds)))
 
-    # The default affine parameters
-    theta_all = { }
-    kernel = GaussLinKernelWithLabels(sigma_varifold, md_ds[ids[0]].lp.shape[1])
-    print(f"Kernel initialized with {md_ds[ids[0]].lp.shape[1]} labels.")
-    for i1, (k1,v1) in enumerate(md_ds.items()):
-        for i2, (k2,v2) in enumerate(md_ds.items()):
-            if k1 != k2:
-            	print(f"Processing pair: {k1} and {k2}")
-            	loss_ab = lossVarifoldSurfWithLabels(v1.ft, v2.vt, v2.ft, v1.lpt, v2.lpt, kernel)
-            	loss_ba = lossVarifoldSurfWithLabels(v2.ft, v1.vt, v1.ft, v2.lpt, v1.lpt, kernel)
-            	pair_theta = torch.tensor([0.01, 0.01, 0.01, 1.0, 0.0, 0.0, 0.0], dtype=torch.float32, device=device, requires_grad=True)
-            	print(f"Initial pair_theta for {k1}, {k2}: {pair_theta}")
-                
-                # Create optimizer
-                opt_affine = torch.optim.LBFGS([pair_theta], max_eval=10, max_iter=10, line_search_fn='strong_wolfe')
+        # The default affine parameters
+        theta_all = {}
+        kernel = GaussLinKernelWithLabels(sigma_varifold, md_ds[ids[0]].lp.shape[1])
+        print(f"Kernel initialized with {md_ds[ids[0]].lp.shape[1]} labels.")
 
-                # Define closure
-                def closure():
-                    opt_affine.zero_grad()
+        for i1, (k1, v1) in enumerate(md_ds.items()):
+            for i2, (k2, v2) in enumerate(md_ds.items()):
+                if k1 != k2:
+                    print(f"Processing pair: {k1} and {k2}")
 
-                    R = rotation_from_vector(pair_theta[0:3]) * pair_theta[3]
-                    b = pair_theta[4:]
-                    R_inv = torch.inverse(R)
-                    b_inv = - R_inv @ b
+                    # Define the symmetric loss for this pair
+                    loss_ab = lossVarifoldSurfWithLabels(v1.ft, v2.vt, v2.ft, v1.lpt, v2.lpt, kernel)
+                    loss_ba = lossVarifoldSurfWithLabels(v2.ft, v1.vt, v1.ft, v2.lpt, v1.lpt, kernel)
 
-                    v1_to_v2 = (R @ v1.vt.t()).t() + b
-                    v2_to_v1 = (R_inv @ v2.vt.t()).t() + b_inv
+                    # Check if losses are valid (not zero or NaN)
+                    if torch.any(torch.isnan(loss_ab)) or torch.any(torch.isnan(loss_ba)):
+                        print(f"Warning: NaN loss detected for pair {k1}, {k2}")
+                        continue
 
-                    L = 0.5 * (loss_ab(v1_to_v2) + loss_ba(v2_to_v1))
-                    L.backward()
-                    print(f"Closure loss: {L.item()}")
-                    return L
-                
-                # Run the optimization
-                for i in range(10):
-                    opt_affine.step(closure)
+                    pair_theta = torch.tensor([0.01, 0.01, 0.01, 1.0, 0.0, 0.0, 0.0], 
+                                              dtype=torch.float32, device=device, requires_grad=True)
+                    print(f"Initial pair_theta for {k1}, {k2}: {pair_theta}")
 
-                # Print loss and record the best run/best parameters
-                dsq_sub[i1,i2] = closure().item()
-                theta_all[(k1,k2)] = pair_theta.detach()
-                print(f'Pair {k1}, {k2} loss : {dsq_sub[i1,i2]:8.6f}')
+                    # Create optimizer
+                    opt_affine = torch.optim.LBFGS([pair_theta], max_eval=10, max_iter=10, line_search_fn='strong_wolfe')
+
+                    # Define closure
+                    def closure():
+                        opt_affine.zero_grad()
+
+                        R = rotation_from_vector(pair_theta[0:3]) * pair_theta[3]
+                        b = pair_theta[4:]
+                        R_inv = torch.inverse(R)
+                        b_inv = - R_inv @ b
+
+                        v1_to_v2 = (R @ v1.vt.t()).t() + b
+                        v2_to_v1 = (R_inv @ v2.vt.t()).t() + b_inv
+
+                        L = 0.5 * (loss_ab(v1_to_v2) + loss_ba(v2_to_v1))
+                        L.backward()
+
+                        print(f"Closure loss: {L.item()}")  # Print loss during optimization
+                        return L
+
+                    # Run the optimization
+                    for i in range(10):
+                        print(f"Optimizer step {i+1} for pair {k1}, {k2}")
+                        opt_affine.step(closure)
+
+                    # Record the loss and affine parameters
+                    dsq_sub[i1, i2] = closure().item()
+                    theta_all[(k1, k2)] = pair_theta.detach()
+
+                    print(f'Pair {k1}, {k2} loss : {dsq_sub[i1, i2]:8.6f}')
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
     # Find the index of the template candidate
     i_best = np.argmin(dsq_sub.sum(axis=1))
