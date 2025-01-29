@@ -92,9 +92,11 @@ def groupwise_similarity_registration_keops(tbs: TemplateBuildWorkspace, templat
 
     # From the template directory, load the left/right flip file. 
     flip_lr = np.loadtxt(os.path.join(template.root, 'ashs_template_flip.mat'))
+    print(f"flip_lr: {flip_lr.shape}")  # Check the shape of the flip matrix
 
     # Set the sigma tensors
     sigma_varifold = torch.tensor([template.get_varifold_sigma()], dtype=torch.float32, device=device)
+    print(f"sigma_varifold: {sigma_varifold}")
 
     # Load each of the meshes that will be used to build the template
     md_full, md_ds = {}, {}
@@ -112,6 +114,11 @@ def groupwise_similarity_registration_keops(tbs: TemplateBuildWorkspace, templat
         pd_flipped = vtk_make_pd(md_ds[id].v, md_ds[id].f)
         vtk_set_cell_array(pd_flipped, 'plab', md_ds[id].lp)
         save_vtk(pd_flipped, tbs.fn_affine_input(id))
+       # Print the populated md_ds to ensure it's not empty
+    print(f"Loaded {len(md_ds)} subjects in md_ds.")
+    if not md_ds:
+    	print("Error: No mesh data loaded!")
+    	return
 
     # Compute the varifold loss between all pairs of atlases with similarity transform,
     # running a quick registration between all pairs. This might get too much for large
@@ -122,14 +129,17 @@ def groupwise_similarity_registration_keops(tbs: TemplateBuildWorkspace, templat
     # The default affine parameters
     theta_all = { }
     kernel = GaussLinKernelWithLabels(sigma_varifold, md_ds[ids[0]].lp.shape[1])
+    print(f"Kernel initialized with {md_ds[ids[0]].lp.shape[1]} labels.")
     for i1, (k1,v1) in enumerate(md_ds.items()):
         for i2, (k2,v2) in enumerate(md_ds.items()):
-            if k1 != k2: 
+            if k1 != k2:
+            	print(f"Processing pair: {k1} and {k2}")
                 # Define the symmetric loss for this pair
                 loss_ab = lossVarifoldSurfWithLabels(v1.ft, v2.vt, v2.ft, v1.lpt, v2.lpt, kernel)
                 loss_ba = lossVarifoldSurfWithLabels(v2.ft, v1.vt, v1.ft, v2.lpt, v1.lpt, kernel)
                 pair_theta = torch.tensor([0.01, 0.01, 0.01, 1.0, 0.0, 0.0, 0.0], 
                                         dtype=torch.float32, device=device, requires_grad=True)
+                print(f"Initial pair_theta for {k1}, {k2}: {pair_theta}")
                 
                 # Create optimizer
                 opt_affine = torch.optim.LBFGS([pair_theta], max_eval=10, max_iter=10, line_search_fn='strong_wolfe')
@@ -148,6 +158,7 @@ def groupwise_similarity_registration_keops(tbs: TemplateBuildWorkspace, templat
 
                     L = 0.5 * (loss_ab(v1_to_v2) + loss_ba(v2_to_v1))
                     L.backward()
+                    print(f"Closure loss: {L.item()}")
                     return L
                 
                 # Run the optimization
