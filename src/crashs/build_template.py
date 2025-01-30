@@ -139,7 +139,6 @@ def groupwise_similarity_registration_keops(tbs: TemplateBuildWorkspace, templat
                     # Define the symmetric loss for this pair
                     loss_ab = lossVarifoldSurfWithLabels(v1.ft, v2.vt, v2.ft, v1.lpt, v2.lpt, kernel)
                     loss_ba = lossVarifoldSurfWithLabels(v2.ft, v1.vt, v1.ft, v2.lpt, v1.lpt, kernel)
-                    print("Symmetric loss: {loss_ab}, {loss_ba}")
 
                     # Check if losses are valid (not zero or NaN)
                     if torch.any(torch.isnan(loss_ab)) or torch.any(torch.isnan(loss_ba)):
@@ -148,10 +147,11 @@ def groupwise_similarity_registration_keops(tbs: TemplateBuildWorkspace, templat
 
                     pair_theta = torch.tensor([0.01, 0.01, 0.01, 1.0, 0.0, 0.0, 0.0], 
                                               dtype=torch.float32, device=device, requires_grad=True)
-                    print(f"Initial pair_theta for {k1}, {k2}: {pair_theta}")
+                    print(f"Being Create Optimizer")
 
                     # Create optimizer
                     opt_affine = torch.optim.LBFGS([pair_theta], max_eval=10, max_iter=10, line_search_fn='strong_wolfe')
+                    print(f"End create optimizer, begin define closure")
 
                     # Define closure
                     def closure():
