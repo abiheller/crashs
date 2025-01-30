@@ -1,4 +1,5 @@
 # Kernel definitions (from KeOps)
+import pdb
 import numpy as np
 import torch
 import time
@@ -165,7 +166,7 @@ def lossVarifoldSurfWithLabels(FS, VT, FT, lab_S, lab_T, K):
             print(f"NaN detected in vertices: V0 = {V0}, V1 = {V1}, V2 = {V2}")
         if torch.any(torch.isinf(V0)) or torch.any(torch.isinf(V1)) or torch.any(torch.isinf(V2)):
             print(f"Inf detected in vertices: V0 = {V0}, V1 = {V1}, V2 = {V2}")
-        
+        pdb.set_trace()
         centers, normals = (V0 + V1 + V2) / 3, 0.5 * torch.cross(V1 - V0, V2 - V0, dim=-1)
         length = (normals**2).sum(dim=1)[:, None].sqrt()
         return centers, length, normals / length
