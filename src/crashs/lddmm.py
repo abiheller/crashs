@@ -157,6 +157,15 @@ def lossVarifoldSurfWithLabels(FS, VT, FT, lab_S, lab_T, K):
             V.index_select(0, F[:, 1]),
             V.index_select(0, F[:, 2]),
         )
+        print(f"V0 shape: {V0.shape}")
+        print(f"V1 shape: {V1.shape}")
+        print(f"V2 shape: {V2.shape}")
+        
+        if torch.any(torch.isnan(V0)) or torch.any(torch.isnan(V1)) or torch.any(torch.isnan(V2)):
+            print(f"NaN detected in vertices: V0 = {V0}, V1 = {V1}, V2 = {V2}")
+        if torch.any(torch.isinf(V0)) or torch.any(torch.isinf(V1)) or torch.any(torch.isinf(V2)):
+            print(f"Inf detected in vertices: V0 = {V0}, V1 = {V1}, V2 = {V2}")
+        
         centers, normals = (V0 + V1 + V2) / 3, 0.5 * torch.cross(V1 - V0, V2 - V0)
         length = (normals**2).sum(dim=1)[:, None].sqrt()
         return centers, length, normals / length
