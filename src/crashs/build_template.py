@@ -135,11 +135,12 @@ def groupwise_similarity_registration_keops(tbs: TemplateBuildWorkspace, templat
             for i2, (k2, v2) in enumerate(md_ds.items()):
                 if k1 != k2:
                     print(f"Processing pair: {k1} and {k2}")
-                    pdb.set_trace()
+
                     # Define the symmetric loss for this pair
                     loss_ab = lossVarifoldSurfWithLabels(v1.ft, v2.vt, v2.ft, v1.lpt, v2.lpt, kernel)
                     loss_ba = lossVarifoldSurfWithLabels(v2.ft, v1.vt, v1.ft, v2.lpt, v1.lpt, kernel)
-
+                    
+                    pdb.set_trace()
                     # Check if losses are valid (not zero or NaN)
                     if torch.any(torch.isnan(loss_ab)) or torch.any(torch.isnan(loss_ba)):
                         print(f"Warning: NaN loss detected for pair {k1}, {k2}")
